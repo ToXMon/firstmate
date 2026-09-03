@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+# model-router-refresh - semantic role routing for a multi-model coding crew.
+#
+# Keeps stable crew role names (FRONTIER_PLANNER, CODER, CHEAP_WORKER, SCOUT,
+# CRITIC) separated from current concrete model assignments in
+# config/model-roles.json, and refreshes those assignments from the live
+# Surplus catalog without losing a known-good routing when the catalog is
+# unavailable.
+#
+# Usage:
+#   model-router-refresh [refresh] [--config PATH] [--catalog live|snapshot|file:PATH] [--dry-run]
+#   model-router-refresh resolve <ROLE> [--config PATH] [--json]
+#   model-router-refresh emit-dispatch [--config PATH]
+#   model-router-refresh status [--config PATH]
+#
+# refresh (the default when no subcommand is given) queries the live catalog,
+# keeps every assignment whose model is still active and tool-capable, moves
+# unhealthy roles to their first healthy alternate, and records catalog state
+# and check time. With no reachable catalog source it keeps every assignment
+# and the last successful check time unchanged, so the file always preserves
+# the last-known-good routing. Roles marked "pinned": true are manual operator
+# overrides and are never reassigned by refresh; a pinned role whose model is
+# unhealthy is reported as a warning for the operator to settle by hand. The
+# top-level codex fallback block is never modified by refresh. Writes are
+# atomic (temp file in the same directory, then rename).
+#
+# resolve prints the concrete worker assignment for one role and is the thin
+# integration point for dispatchers: feed its fields into
+#   fm-spawn.sh <task> <repo> --harness <harness> --model <model> --effort <effort> ...
+#
+# emit-dispatch prints a Firstmate config/crew-dispatch.json document built
+# from the current roles. Copy it into a firstmate home's config/ directory to
+# give that home role-aware crew dispatch with no upstream source change.
+#
+# Operator deployment:
+#   - Default config: <repo>/config/model-roles.json; override per invocation
+#     with --config, or globally with MODEL_ROLES_CONFIG, to deploy from
+#     another location such as a private dev-harness directory.
+#   - Catalog sources, in order: `pi --list-models surplus` (pi's dynamic
+#     registry, backed by the live Surplus /v1/models and /api/markets fetch)
+#     and the credential-free snapshot at ~/.cache/dev-harness/surplus-models.json
+#     (active/toolCapable/pricing metadata). A model is healthy when a source
+#     proves it active and tool-capable; a listing without those labels counts
+#     as present-but-unproven and never displaces a last-known-good
+#     assignment. Override the pi binary or snapshot path with
+#     MODEL_ROLES_PI_BIN / MODEL_ROLES_SNAPSHOT for testing or air-gapped use;
+#     --catalog file:PATH pins an exact snapshot-shaped fixture.
+#   - Make the command available as model-router-refresh on PATH, e.g.
+#     ln -s <repo>/scripts/model-router-refresh ~/.local/bin/model-router-refresh
+#   - Escalation order for a role: assigned model -> alternates (live-verified
+#     by refresh) -> the codex fallback recorded in the config -> hold the
+#     task for the operator. Credentials are never read, logged, or copied by
+#     this script; live catalog authentication belongs to pi's own credential
+#     store.
+#
+# Exit codes: 0 success, including a degraded refresh that preserved the last
+# known good routing; 1 bad usage, unreadable or malformed config, or an
+# unsafe refresh result; 2 resolve of an unknown role.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_CONFIG="$SCRIPT_DIR/../config/model-roles.json"
+ROLES="FRONTIER_PLANNER CODER CHEAP_WORKER SCOUT CRITIC"
+CATALOG_MODE=live
+CATALOG_FILE=
+DRY_RUN=0
+
+die() { echo "model-router-refresh: $*" >&2; exit 1; }
+warn() { echo "model-router-refresh: warning: $*" >&2; }
+
+config_path() { printf '%s' "${MODEL_ROLES_CONFIG:-$DEFAULT_CONFIG}"; }
+
+load_config() { # <path>
+  jq -e . "$1" >/dev/null 2>&1 || die "config is not valid JSON: $1"
+  jq -e '.roles | type == "object"' "$1" >/dev/null || die "config has no roles object: $1"
+}
+
+bare() { case "$1" in */*) printf '%s' "${1#*/}" ;; *) printf '%s' "$1" ;; esac; }
+
+catalog_rows() { # prints "<id>\t<active>\t<toolCapable>" lines from all sources
+  local pi_bin="${MODEL_ROLES_PI_BIN:-pi}" snapshot="${MODEL_ROLES_SNAPSHOT:-$HOME/.cache/dev-harness/surplus-models.json}"
+  if [ "$CATALOG_MODE" = "file" ]; then
+    [ -f "$CATALOG_FILE" ] || die "catalog fixture not found: $CATALOG_FILE"
+    jq -r '.catalogModels[]? | [.id, (.active|tostring), (.toolCapable|tostring)] | @tsv' "$CATALOG_FILE"
+    return 0
+  fi
+  "$pi_bin" --list-models surplus 2>/dev/null \
+    | awk '$1=="surplus" && $2!="" {print $2 "\tunknown\tunknown"}' || true
+  if [ -f "$snapshot" ]; then
+    jq -r '.catalogModels[]? | [.id, (.active|tostring), (.toolCapable|tostring)] | @tsv' "$snapshot" 2>/dev/null || true
+  fi
+}
+
+healthy_json() { # <rows> -> JSON array of bare ids proven active+tool-capable
+  printf '%s\n' "$1" | jq -R -s '
+    split("\n") | map(select(length > 0)) | map(split("\t"))
+    | map(select(.[1] == "true" and .[2] == "true")) | map(.[0]) | unique'
+}
+
+cmd_resolve() {
+  local role json harness model effort
+  load_config "$(config_path)"
+  role=${ROLE_ARG:-}
+  [ -n "$role" ] || die "resolve requires a role name: one of: $ROLES"
+  json=$(jq -e --arg role "$role" '
+    .roles[$role] as $r |
+    if $r == null then empty
+    else {harness: .harness, model: $r.model, effort: $r.effort, pinned: ($r.pinned // false),
+          fallback: {harness: .fallback.harness, model: .fallback.model}}
+    end' "$(config_path)") || { echo "model-router-refresh: unknown role: $role (known roles: $ROLES)" >&2; exit 2; }
+  if [ "$JSON_OUT" = 1 ]; then printf '%s\n' "$json"; return 0; fi
+  harness=$(jq -r .harness <<<"$json")
+  model=$(jq -r .model <<<"$json")
+  effort=$(jq -r .effort <<<"$json")
+  printf 'harness=%s\nmodel=%s\neffort=%s\n' "$harness" "$model" "$effort"
+}
+
+cmd_emit_dispatch() {
+  load_config "$(config_path)"
+  jq 'def rule($r; $when): {when: $when, use: {harness: .harness, model: .roles[$r].model, effort: .roles[$r].effort}, why: ($r + " role routing: " + .roles[$r].reason)};
+    {rules: [
+      rule("FRONTIER_PLANNER"; "The task is planning, architecture, or decomposition of new work into concrete tasks."),
+      rule("CODER"; "The task is a well-scoped implementation change in code."),
+      rule("CHEAP_WORKER"; "The task is a trivial mechanical edit such as a rename, formatting sweep, or typo fix."),
+      rule("SCOUT"; "The task is investigation, reproduction, or evidence gathering with a report deliverable."),
+      rule("CRITIC"; "The task is independent review or critique of an implementation, including running its tests.")],
+     default: {harness: .harness, model: .roles.CODER.model, effort: .roles.CODER.effort}}' "$(config_path)"
+}
+
+cmd_status() {
+  load_config "$(config_path)"
+  jq -r '
+    "config: " + input_filename,
+    "harness: " + .harness,
+    "catalog: " + .catalog.state + " (last checked " + (.catalog.lastChecked // "never") + ")",
+    "fallback: " + .fallback.harness + "/" + .fallback.model,
+    (.roles | to_entries[] | "  " + .key + ": " + .value.model + " effort=" + .value.effort + (if .value.pinned then " [pinned]" else "" end))
+  ' "$(config_path)"
+}
+
+cmd_refresh() {
+  local cfg rows healthy updated stale=0
+  cfg=$(config_path)
+  [ -f "$cfg" ] || die "config not found: $cfg"
+  load_config "$cfg"
+  rows=$(catalog_rows) || rows=""
+  if [ -z "$rows" ]; then
+    warn "no reachable catalog source; keeping last-known-good routing and lastChecked unchanged"
+    exit 0
+  fi
+  healthy=$(healthy_json "$rows")
+  updated=$(mktemp "${cfg%/*}/.model-roles.XXXXXX")
+  trap 'rm -f "$updated"' EXIT
+  jq --argjson healthy "$healthy" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    def bare(m): if (m | index("/")) then m[(m | index("/") + 1):] else m end;
+    def is_healthy($m): ($healthy | index(bare($m))) != null;
+    .catalog.lastChecked = $now |
+    reduce (.roles | keys[]) as $role (.;
+      . as $base |
+      ($base.roles[$role].pinned // false) as $pinned |
+      (if $pinned or is_healthy($base.roles[$role].model) then $base
+       else
+         ([$base.roles[$role].alternates[]? | select(is_healthy(.))] | first) as $alt |
+         if $alt == null then $base
+         else ($base | .roles[$role].model = ("surplus/" + bare($alt)))
+         end
+       end))' "$cfg" > "$updated" || die "refresh transform failed"
+  load_config "$updated"
+  [ "$(jq -r '[.roles[]] | length' "$updated")" -eq "$(jq -r '[.roles[]] | length' "$cfg")" ] \
+    || die "role count changed during refresh; refusing to write"
+  jq -e '.fallback.harness == "codex"' "$updated" >/dev/null \
+    || die "codex fallback missing after transform; refusing to write"
+  for role in $ROLES; do
+    assign=$(jq -r --arg r "$role" '.roles[$r].model // empty' "$updated")
+    if ! jq -e --argjson healthy "$healthy" --arg m "$(bare "$assign")" '$healthy | index($m) != null' "$updated" >/dev/null; then
+      stale=1
+      if jq -e --arg r "$role" '.roles[$r].pinned // false' "$cfg" >/dev/null; then
+        warn "pinned role $role keeps manual assignment $assign which the catalog cannot prove healthy; settle it by hand"
+      else
+        warn "role $role keeps last-known-good $assign; neither it nor its alternates are provably active+tool-capable right now"
+      fi
+    fi
+  done
+  if [ "$stale" -eq 1 ]; then
+    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.catalog.state = "degraded"' "$updated" > "$updated.new" && mv "$updated.new" "$updated"
+  fi
+  jq -r --slurpfile old "$cfg" '.roles | to_entries[]
+      | select(.value.model != $old[0].roles[.key].model)
+      | "reassignment \(.key): \($old[0].roles[.key].model) -> \(.value.model)"' "$updated" >&2 || true
+  if [ "$DRY_RUN" = 1 ]; then
+    echo "dry-run: refreshed config left at $updated and not installed"
+    trap - EXIT
+    return 0
+  fi
+  mv "$updated" "$cfg"
+  trap - EXIT
+  echo "refreshed $(config_path)"
+}
+
+cmd=refresh
+sub_args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    refresh|resolve|emit-dispatch|status) cmd=$1 ;;
+    --config)
+      MODEL_ROLES_CONFIG=${2:-}
+      [ -n "$MODEL_ROLES_CONFIG" ] || die "--config requires a path"
+      shift
+      ;;
+    --catalog)
+      case "${2:-}" in
+        live|snapshot) CATALOG_MODE=$2 ;;
+        file:*) CATALOG_MODE=file; CATALOG_FILE=${2#file:} ;;
+        *) die "--catalog expects live, snapshot, or file:PATH" ;;
+      esac
+      shift
+      ;;
+
+    --json) sub_args+=(--json) ;;
+    --dry-run) DRY_RUN=1 ;;
+    -*) die "unknown option: $1" ;;
+    *) sub_args+=("$1") ;;
+  esac
+  shift
+done
+
+case "$cmd" in
+  refresh) cmd_refresh ;;
+  resolve)
+    ROLE_ARG=${sub_args[0]:-}
+    JSON_OUT=0
+    for a in "${sub_args[@]:1}"; do [ "$a" = "--json" ] && JSON_OUT=1; done
+    cmd_resolve
+    ;;
+  emit-dispatch) cmd_emit_dispatch ;;
+  status) cmd_status ;;
+esac

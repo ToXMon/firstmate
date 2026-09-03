@@ -10,4 +10,5 @@ scratchpad*
 __pycache__/
 *.pyc
 .env
-config/
+config/*
+!config/model-roles.json

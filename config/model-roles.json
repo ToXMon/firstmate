@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "description": "Semantic multi-model crew routing: stable role names on the left, current concrete provider/model assignments on the right. Refresh assignments with scripts/model-router-refresh; pin a role (pinned=true) to protect a manual assignment from refresh.",
+  "harness": "pi",
+  "provider": "surplus",
+  "fallback": {
+    "harness": "codex",
+    "model": "gpt-5.5",
+    "reason": "High-reliability escalation when Surplus routing fails: the assigned model disappears from the live catalog, its alternates are unhealthy, or the Surplus API is unreachable and a fresh task cannot wait for recovery.",
+    "escalation": "role model -> role alternates (live-verified) -> this codex fallback -> hold the task for the operator",
+    "verifiedLocally": false,
+    "note": "The codex CLI is not installed on the acceptance host, so the fallback is documented and preserved here but was not smoke-tested in this environment."
+  },
+  "pricingNotes": {
+    "unit": "USD per million tokens, converted from Surplus /v1/models per-token decimals by the pi surplus provider extension.",
+    "limitations": [
+      "Values are catalog-declared list prices at snapshot time, not invoice-verified amounts.",
+      "Marketplace seller discounts or surcharges may change the billed price without changing the catalog entry.",
+      "The active label reflects healthy sellers at catalog refresh time and can change between refreshes."
+    ]
+  },
+  "roles": {
+    "FRONTIER_PLANNER": {
+      "model": "surplus/claude-sonnet-5",
+      "effort": "high",
+      "pinned": false,
+      "reason": "Frontier-class planning and decomposition with a 1M-token context and reasoning; moderate list price keeps planning runs affordable.",
+      "alternates": [
+        "surplus/gemini-3.1-pro"
+      ],
+      "pricing": {
+        "input": 2.0,
+        "output": 10.0,
+        "cacheRead": 0.2,
+        "asOf": "2026-09-03"
+      }
+    },
+    "CODER": {
+      "model": "surplus/glm-5.2",
+      "effort": "high",
+      "pinned": false,
+      "reason": "Strong tool-using coding model with a 1M-token context and reasoning at a mid-tier price; the same model has been driving a full agentic coding session locally.",
+      "alternates": [
+        "surplus/qwen3-235b-a22b-2507"
+      ],
+      "pricing": {
+        "input": 0.966,
+        "output": 3.036,
+        "cacheRead": 0.1932,
+        "asOf": "2026-09-03"
+      }
+    },
+    "CHEAP_WORKER": {
+      "model": "surplus/glm-5.3-flash",
+      "effort": "low",
+      "pinned": false,
+      "reason": "Cheapest smoke-verified tool-capable model with reasoning and a 1M-token context; suited to mechanical, well-scoped edits.",
+      "alternates": [
+        "surplus/deepseek-v4-flash"
+      ],
+      "pricing": {
+        "input": 0.075,
+        "output": 0.25,
+        "cacheRead": 0.015,
+        "asOf": "2026-09-03"
+      }
+    },
+    "SCOUT": {
+      "model": "surplus/deepseek-v4-flash",
+      "effort": "medium",
+      "pinned": false,
+      "reason": "Very cheap reasoning model with tool support and a 1M-token context for investigation and evidence gathering.",
+      "alternates": [
+        "surplus/qwen3.5-flash"
+      ],
+      "pricing": {
+        "input": 0.0886,
+        "output": 0.1772,
+        "cacheRead": 0.0177,
+        "asOf": "2026-09-03"
+      }
+    },
+    "CRITIC": {
+      "model": "surplus/minimax-m2.1",
+      "effort": "high",
+      "pinned": false,
+      "reason": "Independent review from a different model family and context than the implementation roles; reasoning plus tool support for running tests, at a price that suits long reviews.",
+      "alternates": [
+        "surplus/grok-4.1-fast"
+      ],
+      "pricing": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.03,
+        "asOf": "2026-09-03"
+      }
+    }
+  },
+  "catalog": {
+    "state": "verified",
+    "lastChecked": "2026-09-03T04:39:49Z",
+    "sources": [
+      "pi --list-models surplus (pi dynamic provider registry, backed by the live Surplus /v1/models and /api/markets fetch)",
+      "~/.cache/dev-harness/surplus-models.json (credential-free snapshot with active/toolCapable/pricing metadata)"
+    ],
+    "note": "All five assigned models and all six alternates passed an exact-string inference test and a real bash tool-call round trip on 2026-09-03; see docs/verification/multi-model-crew.md."
+  }
+}
