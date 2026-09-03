@@ -98,7 +98,7 @@
   },
   "catalog": {
     "state": "verified",
-    "lastChecked": "2026-09-03T04:39:49Z",
+    "lastChecked": "2026-09-03T15:52:52Z",
     "sources": [
       "pi --list-models surplus (pi dynamic provider registry, backed by the live Surplus /v1/models and /api/markets fetch)",
       "~/.cache/dev-harness/surplus-models.json (credential-free snapshot with active/toolCapable/pricing metadata)"
