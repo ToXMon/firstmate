@@ -214,9 +214,16 @@ if [ "${FM_BROWSER_LIVE_E2E_PI:-0}" = 1 ]; then
 Your browser is selected by the exported CHROME_DEVTOOLS_AXI_BROWSER_URL and CHROME_DEVTOOLS_AXI_SESSION environment variables; do not change them and never pass a --port. \
 Use bash to run: chrome-devtools-axi open '$BASE_URL/index.html', then snapshot, fill the textbox with modeltask, click the go button, then eval that the heading reads submitted:modeltask. \
 When every step has really succeeded, reply with exactly: BROWSER-TASK-PASS"
-  answer=$(CHROME_DEVTOOLS_AXI_BROWSER_URL="http://127.0.0.1:$port" \
+  # The nested pi must never adopt the invoking project's pi state: a cwd
+  # with a live session makes pi submit into that session ("Agent is already
+  # processing" while it streams), and a cwd with project-local .pi/extensions
+  # loads them into the probe (firstmate's fm-calm emits a stale-ctx error on
+  # ephemeral nested sessions). Running from this scratch lab dir with its own
+  # session dir isolates the probe without disabling any pi or axi behavior;
+  # the model, its tools, and the lease env are all still fully real.
+  answer=$(cd "$LAB" && CHROME_DEVTOOLS_AXI_BROWSER_URL="http://127.0.0.1:$port" \
     CHROME_DEVTOOLS_AXI_SESSION="$session" \
-    pi --model "$model" --no-session -p "$prompt" 2>&1)
+    timeout 420 pi --model "$model" --no-session --session-dir "$LAB/pi-sessions" -p "$prompt" 2>&1)
   printf '%s\n' "$answer" | grep -q 'BROWSER-TASK-PASS' \
     || fail "model $model did not complete the browser task: $(printf '%s' "$answer" | tail -5)"
   FM_HOME="$HOME_DIR" "$BROWSER" destroy model-worker >/dev/null || fail "destroy model-worker failed"

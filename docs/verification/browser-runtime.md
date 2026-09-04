@@ -22,7 +22,7 @@ Verified 2026-09-04 on Ubuntu 24.04 (kernel 6.8, `apparmor_restrict_unprivileged
 
 ## Live one-worker acceptance
 
-`FM_BROWSER_LIVE_E2E=1 bash tests/fm-browser-runtime-live-e2e.test.sh`, 2026-09-04, passed every check:
+`FM_BROWSER_LIVE_E2E=1 bash tests/fm-browser-runtime-live-e2e.test.sh`, 2026-09-04, passed every check, and the fully gated run `FM_BROWSER_LIVE_E2E=1 FM_BROWSER_LIVE_E2E_PI=1 FM_BROWSER_LIVE_E2E_MODEL=surplus/glm-5.2` re-passed end to end after the nested-pi isolation fix, including `ok - real pi-driven browser task completed by surplus/glm-5.2`:
 
 - navigation (`open`) and `snapshot` exposing interactive refs;
 - `fill` landing its value in the textbox (asserted through `eval`, not the CLI echo);
@@ -68,5 +68,6 @@ All four completed the task through the chrome-devtools-axi CLI on the first att
 - A wedged CDP target (`Network.enable` timeout, `Bridge ... CDP target appears to have gone away`) was observed only when an ad-hoc smoke reused a profile directory after an unclean Chrome kill; per-lease fresh profiles never reproduced it, and the full acceptance runs clean.
 - chrome-devtools-axi named sessions keep a bridge process alive after the CLI exits; lease destroy stops the named session best-effort, but an orphaned bridge from a manually killed run must be resolved by hand.
 - Persistent authenticated profiles are design only (see `docs/browser-runtime.md`); nothing in this run verifies credential persistence.
+- A nested `pi -p` invoked from a directory whose current pi session is streaming fails with pi's own `Agent is already processing` (agent-session.js refuses a submit into a streaming session), and a cwd carrying project-local `.pi/extensions` (firstmate's primary checkout, `fm-calm.ts`) loads them into the probe, which emits a stale-ctx error on ephemeral nested sessions (reproduced 2026-09-04, non-fatal, exit 0). The acceptance's model probe therefore runs from its scratch lab directory with an isolated `--session-dir`, which removes the exposure without disabling any pi or axi behavior; this is an invocation-context constraint of nested pi probes, not a browser-runtime defect, and it is preserved here as the documented way to run the model-driven section.
 
 Re-run `tests/fm-browser.test.sh`, `tests/model-router.test.sh`, and the seam case in `tests/fm-spawn-dispatch-profile.test.sh` after any lease-contract change, and re-establish the model table whenever the Surplus provider extension, pi, or Chrome version changes materially.
