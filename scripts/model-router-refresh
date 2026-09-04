@@ -2,10 +2,10 @@
 # model-router-refresh - semantic role routing for a multi-model coding crew.
 #
 # Keeps stable crew role names (FRONTIER_PLANNER, CODER, CHEAP_WORKER, SCOUT,
-# CRITIC) separated from current concrete model assignments in
-# config/model-roles.json, and refreshes those assignments from the live
-# Surplus catalog without losing a known-good routing when the catalog is
-# unavailable.
+# CRITIC, WEB_RESEARCH, BROWSER_OPERATOR) separated from current concrete
+# model assignments in config/model-roles.json, and refreshes those
+# assignments from the live Surplus catalog without losing a known-good
+# routing when the catalog is unavailable.
 #
 # Usage:
 #   model-router-refresh [refresh] [--config PATH] [--catalog live|snapshot|file:PATH] [--dry-run]
@@ -61,7 +61,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_CONFIG="$SCRIPT_DIR/../config/model-roles.json"
-ROLES="FRONTIER_PLANNER CODER CHEAP_WORKER SCOUT CRITIC"
+ROLES="FRONTIER_PLANNER CODER CHEAP_WORKER SCOUT CRITIC WEB_RESEARCH BROWSER_OPERATOR"
 CATALOG_MODE=live
 CATALOG_FILE=
 DRY_RUN=0
@@ -121,6 +121,8 @@ cmd_emit_dispatch() {
   jq 'def rule($r; $when): {when: $when, use: {harness: .harness, model: .roles[$r].model, effort: .roles[$r].effort}, why: ($r + " role routing: " + .roles[$r].reason)};
     {rules: [
       rule("FRONTIER_PLANNER"; "The task is planning, architecture, or decomposition of new work into concrete tasks."),
+      rule("WEB_RESEARCH"; "The task is web research or live information gathering through a dedicated browser: navigating, reading, searching, or extracting current web content, not editing code."),
+      rule("BROWSER_OPERATOR"; "The task primarily operates a browser end to end: filling forms, clicking through flows, submitting, screenshotting, or driving a web UI with chrome-devtools-axi."),
       rule("CODER"; "The task is a well-scoped implementation change in code."),
       rule("CHEAP_WORKER"; "The task is a trivial mechanical edit such as a rename, formatting sweep, or typo fix."),
       rule("SCOUT"; "The task is investigation, reproduction, or evidence gathering with a report deliverable."),

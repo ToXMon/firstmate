@@ -277,6 +277,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/browser-runtime.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/arm-pretool-check.md",
       "audience": "maintainer-architecture"
     },
@@ -421,6 +425,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/verification/browser-runtime.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/dispatch-auth.md",
       "audience": "maintainer-verification"
     },
@@ -475,6 +483,10 @@
     {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
+    },
+    {
+      "path": "docs/verification/multi-model-crew.md",
+      "audience": "maintainer-verification"
     }
   ]
 }

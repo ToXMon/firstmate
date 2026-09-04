@@ -118,6 +118,50 @@ assert_meta_profile() {
   assert_grep "effort=$effort" "$meta" "meta missing effort=$effort"
 }
 
+test_browser_lease_env_ships_into_worker_pane() {
+  local rec id out status sendlog fake_chrome lease_port
+  id=profile-browser-lease-z20
+  rec=$(make_spawn_case profile-browser-lease pi "$id")
+  read_case_record "$rec"
+  sendlog="$CASE_DIR/send.log"
+
+  # Control first: without a lease, no browser env is sent to the pane.
+  : > "$sendlog"
+  out=$(FM_FAKE_SEND_LOG="$sendlog" run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "pi spawn without a browser lease should succeed"
+  if grep -q "CHROME_DEVTOOLS_AXI" "$sendlog"; then
+    fail "browser env was sent to a pane with no lease"
+  fi
+
+  # A real lease from bin/fm-browser.sh against the shared fake chrome,
+  # owned by the task id that will be spawned next.
+  id=profile-browser-lease-z21
+  fm_test_spawn_brief "$HOME_DIR" "$id"
+  fake_chrome=$(fm_test_fake_chrome "$CASE_DIR/fake-chrome")
+  if ! FM_HOME="$HOME_DIR" FM_BROWSER_AXI_BIN=/nonexistent-axi \
+      FM_BROWSER_CHROME_BIN="$fake_chrome" FM_BROWSER_START_TIMEOUT=15 \
+      FM_TEST_FAKE_SERVE="$CASE_DIR/fake-chrome/serve.py" \
+      FM_TEST_FAKE_CHROME_ARGS="$CASE_DIR/chrome.args" FM_TEST_FAKE_CHROME_PID="$CASE_DIR/chrome.pid" \
+      "$ROOT/bin/fm-browser.sh" lease "$id" > "$CASE_DIR/lease.out" 2>&1; then
+    fail "could not create browser lease for $id: $(cat "$CASE_DIR/lease.out")"
+  fi
+  lease_port=$(jq -r .port "$HOME_DIR/state/browser-leases/$id.json")
+
+  : > "$sendlog"
+  out=$(FM_FAKE_SEND_LOG="$sendlog" run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "pi spawn with a browser lease should succeed"
+  assert_grep "export CHROME_DEVTOOLS_AXI_BROWSER_URL=http://127.0.0.1:$lease_port" "$sendlog" \
+    "worker pane did not receive the leased browser url"
+  assert_grep "export CHROME_DEVTOOLS_AXI_SESSION=fmb-$id-" "$sendlog" \
+    "worker pane did not receive the leased axi session"
+  FM_HOME="$HOME_DIR" FM_BROWSER_AXI_BIN=/nonexistent-axi \
+    "$ROOT/bin/fm-browser.sh" destroy "$id" >/dev/null 2>&1 \
+    || fail "lease cleanup failed after seam test"
+  pass "browser lease env is shipped into the worker pane only when a lease exists"
+}
+
 test_no_profile_keeps_claude_profile_defaults() {
   local rec id out status expected launch
   id=profile-off-z1
@@ -826,5 +870,6 @@ test_claude_forwards_firstmate_config_dir_when_set
 test_claude_omits_config_dir_prefix_when_unset
 test_non_claude_harness_ignores_config_dir
 test_active_dispatch_profile_does_not_block_secondmate_launch
+test_browser_lease_env_ships_into_worker_pane
 
 echo "# all fm-spawn-dispatch-profile tests passed"

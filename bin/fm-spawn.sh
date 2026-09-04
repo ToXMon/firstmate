@@ -3231,6 +3231,20 @@ spawn_record_traceparent() {
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+# Dedicated-browser lease handoff (bin/fm-browser.sh owns the lease contract).
+# A task whose browser lease exists gets its env shipped through the same
+# pre-launch channel, so any harness's browser work lands on its own isolated
+# Chrome with no firstmate-wide Chrome state. No lease record means no line is
+# sent and nothing below changes, so non-browser tasks are untouched.
+if [ -f "$STATE/browser-leases/$ID.json" ]; then
+  if BROWSER_LEASE_ENV=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="${FM_STATE_OVERRIDE:-}" "$FM_ROOT/bin/fm-browser.sh" env "$ID" 2>/dev/null); then
+    while IFS= read -r lease_line; do
+      [ -n "$lease_line" ] && spawn_send_text_line "$T" "$lease_line"
+    done <<<"$BROWSER_LEASE_ENV"
+  else
+    echo "warning: browser lease for $ID exists but is not running; the worker starts without browser env (bin/fm-browser.sh status $ID)" >&2
+  fi
+fi
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.

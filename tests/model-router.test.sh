@@ -45,6 +45,8 @@ CODER
 CHEAP_WORKER
 SCOUT
 CRITIC
+WEB_RESEARCH
+BROWSER_OPERATOR
 EOF
 [ "$all_resolved" = yes ] || fail "resolve did not return the configured model for every role"
 pass "resolve returns the configured model for every role"
@@ -64,12 +66,23 @@ jq -e '.harness == "pi" and (.model | startswith("surplus/")) and (.effort | IN(
   "$WORK/resolve.json" >/dev/null || fail "resolve --json payload is malformed"
 pass "resolve --json emits a concrete assignment with the codex fallback"
 
-# 4. emit-dispatch prints a five-rule crew-dispatch document.
+# 4. emit-dispatch prints a seven-rule crew-dispatch document with the
+# browser rules ahead of the generic coding rule so a browser task never
+# falls through to CODER's when-clause.
 MODEL_ROLES_CONFIG="$CONFIG" "$ROUTER" emit-dispatch > "$WORK/dispatch.json" 2>/dev/null \
   || fail "emit-dispatch failed"
-jq -e '(.rules | length == 5) and (.rules[] | has("when") and (.use | has("harness") and has("model"))) and (.default | has("model"))' \
-  "$WORK/dispatch.json" >/dev/null || fail "emit-dispatch document is malformed"
-pass "emit-dispatch emits five dispatch rules plus a default profile"
+jq -e '
+  [.rules[].when] as $w
+  | ($w | map(select(test("browser"))) | length) as $browser_rules
+  | ($w | index("The task is a well-scoped implementation change in code.")) as $coder_at
+  | ($w | to_entries | map(select(.value | test("browser"))) | map(.key) | min) as $first_browser_at
+  | (.rules | length == 7)
+    and (.rules[] | has("when") and (.use | has("harness") and has("model")))
+    and (.default | has("model"))
+    and ($browser_rules == 2)
+    and ($first_browser_at < $coder_at)
+' "$WORK/dispatch.json" >/dev/null || fail "emit-dispatch document is malformed or browser rules misplaced"
+pass "emit-dispatch emits seven dispatch rules with browser rules ahead of the coding rule"
 
 # 5. refresh against a fully healthy catalog keeps assignments and verifies.
 cfg=$(copy_config)

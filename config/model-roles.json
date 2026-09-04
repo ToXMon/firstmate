@@ -80,6 +80,36 @@
         "asOf": "2026-09-03"
       }
     },
+    "WEB_RESEARCH": {
+      "model": "surplus/deepseek-v4-flash",
+      "effort": "medium",
+      "pinned": false,
+      "reason": "Fastest and cheapest browser-acceptance-passer with tool support and a 1M context; research workloads are navigation-heavy, so latency and price per page dominate while acceptance quality was equal across candidates.",
+      "alternates": [
+        "surplus/qwen3.5-flash"
+      ],
+      "pricing": {
+        "input": 0.0886,
+        "output": 0.1772,
+        "cacheRead": 0.0177,
+        "asOf": "2026-09-04"
+      }
+    },
+    "BROWSER_OPERATOR": {
+      "model": "surplus/glm-5.2",
+      "effort": "high",
+      "pinned": false,
+      "reason": "The strongest sustained tool user among the evaluated candidates: it passed the full dedicated-browser acceptance and the live fill/click/submit task, and the same model already drives complete agentic coding sessions, so multi-step precise form flows get proven tool discipline rather than the cheapest price.",
+      "alternates": [
+        "surplus/minimax-m2.1"
+      ],
+      "pricing": {
+        "input": 0.966,
+        "output": 3.036,
+        "cacheRead": 0.1932,
+        "asOf": "2026-09-04"
+      }
+    },
     "CRITIC": {
       "model": "surplus/minimax-m2.1",
       "effort": "high",
@@ -98,7 +128,7 @@
   },
   "catalog": {
     "state": "verified",
-    "lastChecked": "2026-09-03T15:52:52Z",
+    "lastChecked": "2026-09-04T18:38:00Z",
     "sources": [
       "pi --list-models surplus (pi dynamic provider registry, backed by the live Surplus /v1/models and /api/markets fetch)",
       "~/.cache/dev-harness/surplus-models.json (credential-free snapshot with active/toolCapable/pricing metadata)"

@@ -2951,6 +2951,14 @@ fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # Read before the state-file rm below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
+# Best-effort dedicated-browser lease destroy (bin/fm-browser.sh owns the
+# lease contract): no record means no lease and a no-op; a lease that cannot
+# be destroyed is reported loudly but never blocks landing cleanup.
+if [ -f "$STATE/browser-leases/$ID.json" ]; then
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="${FM_STATE_OVERRIDE:-}" \
+    "$FM_ROOT/bin/fm-browser.sh" destroy "$ID" >/dev/null 2>&1 \
+    || echo "warning: browser lease for $ID could not be destroyed; run bin/fm-browser.sh status $ID and resolve it" >&2
+fi
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 status_retire_presentation_task "$STATE" "$ID" || exit 1
 rm -f "$STATE/$ID.turn-ended" \

@@ -91,11 +91,58 @@ fm_test_fake_gh_axi() {
 
 # --- fake tmux / ssh / sleep ------------------------------------------------
 
+# fm_test_fake_chrome <dir>
+# Fake dedicated-Chrome binary for bin/fm-browser.sh tests: records its argv
+# and pid into FM_TEST_FAKE_CHROME_ARGS / FM_TEST_FAKE_CHROME_PID, then serves
+# a loopback /json/version on the --remote-debugging-port it was given. The
+# server runs as a child so this process keeps the original argument list in
+# its command line, exactly like the real dedicated Chrome's main process.
+fm_test_fake_chrome() {
+  local dir=$1
+  mkdir -p "$dir"
+  cat > "$dir/fake-chrome" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$FM_TEST_FAKE_CHROME_ARGS"
+printf '%s' "$$" > "$FM_TEST_FAKE_CHROME_PID"
+port=
+for a in "$@"; do
+  case "$a" in
+    --remote-debugging-port=*) port=${a#*=} ;;
+  esac
+done
+[ -n "$port" ] || { echo "fake-chrome: no port argument" >&2; exit 1; }
+python3 "$FM_TEST_FAKE_SERVE" "$port" &
+child=$!
+trap 'kill "$child" 2>/dev/null; exit 0' TERM INT
+wait "$child"
+SH
+  cat > "$dir/serve.py" <<'PY'
+import http.server, json, socketserver, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"Browser": "FakeChrome/1.0"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(("127.0.0.1", int(sys.argv[1])), H) as s:
+    s.serve_forever()
+PY
+  chmod +x "$dir/fake-chrome"
+  printf '%s' "$dir/fake-chrome"
+}
+
 # fm_test_fake_tmux_spawn <fakebin>
 # Spawn-world tmux: pane_current_path from FM_FAKE_PANE_PATH, session named
 # firstmate, window ops succeed, send-keys succeed. When FM_FAKE_LAUNCH_LOG is
-# set, each send-keys -l payload is appended one per line. Optional
-# FM_FAKE_DUPLICATE_WINDOW is printed from list-windows.
+# set, each send-keys -l payload is appended one per line. When FM_FAKE_SEND_LOG
+# is set, every send-keys invocation's full argument string is appended one per
+# line, capturing the pre-launch line sends (env exports) the -l log misses.
+# Optional FM_FAKE_DUPLICATE_WINDOW is printed from list-windows.
 #
 # The pane path defaults to empty when FM_FAKE_PANE_PATH is unset. Window
 # cleanup and option operations are no-ops. Launch logging is env-gated, so
@@ -126,6 +173,9 @@ case "${1:-}" in
         fi
         prev=$a
       done
+    fi
+    if [ -n "${FM_FAKE_SEND_LOG:-}" ]; then
+      printf '%s\n' "$*" >> "$FM_FAKE_SEND_LOG"
     fi
     exit 0
     ;;
