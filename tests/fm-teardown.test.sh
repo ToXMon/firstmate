@@ -691,6 +691,69 @@ test_local_only_merged_to_local_main_allows() {
   pass "local-only worktree with work merged into local main is torn down (no regression)"
 }
 
+test_local_only_contained_by_clean_integration_branch_allows() {
+  local case_dir rc wt_head
+  case_dir=$(make_case integration-branch)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "integration-landed work"
+  # A canonical integration branch that is not the default contains the task
+  # HEAD (exactly the post-fast-forward landing state) and is checked out
+  # nowhere, so it is pristine: the narrow recognition path must allow this.
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/harness/integration "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "integration-branch: teardown should succeed when a clean non-default local branch contains the work"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "integration-branch: teardown printed a REFUSED line"
+  pass "local-only work contained by a clean canonical local branch is torn down"
+}
+
+test_local_only_contained_by_dirty_checkout_refuses() {
+  local case_dir rc wt_head
+  case_dir=$(make_case integration-dirty)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "integration-dirty work"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/harness/integration "$wt_head"
+  # The containing branch is checked out with a dirty tree, so it is not a
+  # clean landing target and teardown must keep refusing.
+  git -C "$case_dir/project" worktree add --quiet "$case_dir/integration-wt" harness/integration
+  printf 'uncommitted\n' > "$case_dir/integration-wt/dirty.txt"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "integration-dirty: teardown should refuse when the containing branch checkout is dirty"
+  grep -q REFUSED "$case_dir/stderr" || fail "integration-dirty: no REFUSED line in stderr"
+  pass "a containing local branch with a dirty checkout still refuses teardown"
+}
+
+test_local_only_non_containing_branch_refuses() {
+  local case_dir rc base
+  case_dir=$(make_case integration-stale)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "integration-stale work"
+  # The local branch exists but sits on the pre-work commit, so it contains
+  # nothing of the task work: mere branch existence must never count.
+  base=$(git -C "$case_dir/wt" rev-parse HEAD~1)
+  git -C "$case_dir/project" update-ref refs/heads/harness/integration "$base"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "integration-stale: teardown should refuse when no local branch contains the work"
+  grep -q REFUSED "$case_dir/stderr" || fail "integration-stale: no REFUSED line in stderr"
+  pass "a local branch that does not contain the work never counts as landed"
+}
+
 test_no_mistakes_origin_remote_allows() {
   local case_dir rc
   case_dir=$(make_case nm-origin)
@@ -3204,6 +3267,9 @@ test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
+test_local_only_contained_by_clean_integration_branch_allows
+test_local_only_contained_by_dirty_checkout_refuses
+test_local_only_non_containing_branch_refuses
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed

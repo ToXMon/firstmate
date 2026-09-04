@@ -49,7 +49,12 @@
 # Uncommitted changes are never landed.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
-# for the common case where there is no remote at all.
+# for the common case where there is no remote at all, and also work whose
+# commits are contained by another CLEAN LOCAL branch of the same project (a
+# canonical integration branch such as harness/integration that is not the
+# default): local refs only, a remote is never inferred, the containing branch
+# must sit clean wherever it is checked out, and the task worktree's own branch
+# never counts as its own landing target.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
@@ -1451,6 +1456,31 @@ teardown_treehouse_return() {
   return 1
 }
 
+# Is the worktree HEAD contained by a local branch of this project other than
+# the task worktree's own branch and other than the default branch? True when
+# some refs/heads/* name contains HEAD (the work landed there, e.g. via the
+# guarded --target-branch fast-forward onto a canonical integration branch)
+# AND that branch is clean: pristine when checked out nowhere, or with an empty
+# porcelain status wherever it is checked out. Local refs only - a remote is
+# never inferred, and a branch that is merely created-but-not-containing never
+# counts, so this cannot manufacture a landing that did not happen.
+local_branch_contains_head() { # <own-branch>
+  local own=$1 branch wt_path
+  while IFS= read -r branch; do
+    [ -n "$branch" ] || continue
+    [ "$branch" != "$own" ] || continue
+    [ "$branch" != "$DEFAULT" ] || continue
+    git -C "$WT" merge-base --is-ancestor HEAD "$branch" 2>/dev/null || continue
+    wt_path=$(git -C "$WT" worktree list --porcelain 2>/dev/null \
+      | awk -v b="refs/heads/$branch" '$1=="worktree"{p=substr($0,10)} $1=="branch" && $2==b{print p}')
+    if [ -n "$wt_path" ]; then
+      [ -z "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ] || continue
+    fi
+    return 0
+  done < <(git -C "$WT" for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null)
+  return 1
+}
+
 validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
   [ -d "$WT" ] || return 0
@@ -1490,12 +1520,28 @@ validate_worktree_teardown_safety() {
       return 1
     fi
     unmerged=$(printf '%s\n' "$unmerged_raw" | head -5)
-    if [ -n "$dirty" ] || [ -n "$unmerged" ]; then
+    if [ -n "$dirty" ]; then
       echo "REFUSED: local-only worktree $WT has work not yet merged into $DEFAULT and not on any remote." >&2
-      [ -n "$dirty" ] && echo "uncommitted changes present" >&2
-      [ -n "$unmerged" ] && printf 'commits not yet on %s:\n%s\n' "$DEFAULT" "$unmerged" >&2
-      echo "Merge the branch into local $DEFAULT first (bin/fm-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force." >&2
+      echo "uncommitted changes present" >&2
+      echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
       return 1
+    fi
+    if [ -n "$unmerged" ]; then
+      branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
+      if [ -z "$branch" ]; then
+        branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+        TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
+      fi
+      if local_branch_contains_head "$branch"; then
+        # Landed on a non-default clean local branch (e.g. a canonical
+        # integration branch); the dirty and unpushed checks above still ran.
+        :
+      else
+        echo "REFUSED: local-only worktree $WT has work not yet merged into $DEFAULT, not contained by any other clean local branch, and not on any remote." >&2
+        printf 'commits not yet on %s:\n%s\n' "$DEFAULT" "$unmerged" >&2
+        echo "Merge the branch into local $DEFAULT (bin/fm-merge-local.sh, optionally --target-branch <branch>, after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force." >&2
+        return 1
+      fi
     fi
   elif [ -n "$dirty" ]; then
     echo "REFUSED: worktree $WT has uncommitted changes." >&2
