@@ -19,14 +19,16 @@ bin/fm-browser.sh env <task-id>          # export lines for dispatchers
 bin/fm-browser.sh destroy <task-id>      # verified-ownership teardown
 ```
 
-Every lease gets its own Chrome pid, single-use profile directory, dynamically allocated loopback CDP port, and unique `chrome-devtools-axi` named session, so two workers can never see each other's tabs or storage.
+The reusable operator entry points are `scripts/browser-lease-create`, `scripts/browser-lease-status`, and `scripts/browser-lease-destroy` (installed as `~/dev-harness/scripts/browser-lease-*` symlinks into this repo's scripts): thin wrappers that call the same engine with an explicitly resolved path, so ad-hoc lease work and task-integrated lease work share one contract.
+Every lease gets its own Chrome pid, single-use profile, dynamically allocated loopback CDP port, and unique `chrome-devtools-axi` named session, so two workers can never see each other's tabs or storage.
 The home is `--home` or `$FM_HOME` (fail-closed, like `bin/fm-send.sh`); records live under `state/browser-leases/` and profiles under `state/browser-profiles/`.
+Each lease record carries `browser_id`, `task_id`, `pid`, `cdp_port`, `browser_url`, `profile_path`, `axi_session`, and `created_at`, plus the safe-ownership fields (`chrome_bin`, `pid_start`, `window`) destroy re-verifies before signaling anything.
 Destroy refuses loudly rather than signaling any process it cannot prove is the leased Chrome; a refused destroy keeps the record as evidence.
 
 ## Dispatch
 
-For a task routed to a browser role, create the lease before spawning the worker.
-`bin/fm-spawn.sh` ships the lease's `CHROME_DEVTOOLS_AXI_BROWSER_URL` and `CHROME_DEVTOOLS_AXI_SESSION` exports into the worker pane before launch whenever a lease record exists for the task, and `bin/fm-teardown.sh` destroys the lease best-effort during task cleanup, so no firstmate-wide Chrome state or port pinning exists.
+A browser task declares itself at spawn time: `bin/fm-spawn.sh ... --browser` provisions the task's lease before the worker launches, reuses an existing healthy lease, refuses the launch if provisioning fails, and ships the lease's `CHROME_DEVTOOLS_AXI_BROWSER_URL` and `CHROME_DEVTOOLS_AXI_SESSION` exports into the worker pane ahead of the launch command.
+`bin/fm-teardown.sh` destroys the lease on every cleanup path, including worker failure and cancellation, and a destroy failure fails the teardown with the engine's evidence instead of reporting a successful cleanup.
 Never pass `CHROME_DEVTOOLS_AXI_PORT` for autonomous workers; the named session derives its own bridge port.
 
 Browser-role routing is part of the semantic role router: `WEB_RESEARCH` and `BROWSER_OPERATOR` resolve like every other role through `scripts/model-router-refresh` against `config/model-roles.json`, with the shared codex fallback preserved.

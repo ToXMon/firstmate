@@ -42,25 +42,33 @@ FAKE_CHROME=$(make_fake_chrome "$CASE/fakebin")
 
 # 1. lease launches the dedicated binary, records identity, and exports env.
 out=$(fresh_lease alpha) || fail "lease alpha failed"
-assert_contains "$out" "lease alpha: pid=" "lease output missing pid line"
+assert_contains "$out" "lease alpha: browser_id=fmb-alpha-" "lease output missing browser_id line"
 assert_contains "$out" "export CHROME_DEVTOOLS_AXI_BROWSER_URL=http://127.0.0.1:" \
   "lease output missing browser url export"
 assert_contains "$out" "export CHROME_DEVTOOLS_AXI_SESSION=fmb-alpha-" \
   "lease output missing axi session export"
 rec=$(lease_json alpha)
-port=$(jq -r .port <<<"$rec")
+port=$(jq -r .cdp_port <<<"$rec")
 [ "$port" != 9222 ] && [ "$port" != 9224 ] || fail "allocator picked a forbidden port: $port"
 [ "$(jq -r .pid <<<"$rec")" = "$(cat "$CASE/chrome.pid")" ] || fail "record pid is not the launched process"
-jq -e '.pidStart != null' <<<"$rec" >/dev/null || fail "record missing process start time"
+jq -e '.pid_start != null' <<<"$rec" >/dev/null || fail "record missing process start time"
 grep -q -- "--remote-debugging-port=$port" "$CASE/chrome.args" || fail "launched without the recorded port"
-grep -q -- "--user-data-dir=$HOME_DIR/state/browser-profiles/alpha-" "$CASE/chrome.args" \
+grep -q -- "--user-data-dir=$HOME_DIR/state/browser-profiles/fmb-alpha-" "$CASE/chrome.args" \
   || fail "launched without a unique per-lease profile directory"
 grep -q -- "--window-size=390,844" "$CASE/chrome.args" || fail "default window is not 390x844"
-pass "lease launches dedicated chrome with unique profile, port, and session"
+jq -e 'has("browser_id") and has("task_id") and has("pid") and has("cdp_port")
+  and has("browser_url") and has("profile_path") and has("axi_session") and has("created_at")
+  and has("chrome_bin") and has("pid_start") and has("window")' <<<"$rec" >/dev/null \
+  || fail "lease record is missing required metadata keys"
+jq -e --argjson p "$port" '.browser_url == ("http://127.0.0.1:" + ($p|tostring))
+  and .task_id == "alpha" and (.browser_id | startswith("fmb-alpha-"))
+  and .axi_session == .browser_id' <<<"$rec" >/dev/null \
+  || fail "lease record metadata values are inconsistent"
+pass "lease launches dedicated chrome with the required record metadata"
 
 # 2. status and env answer for the live lease; unknown owners exit 2.
 FM_HOME="$HOME_DIR" "$BROWSER" status alpha | grep -q "^alpha: running pid=" || fail "status does not report running lease"
-FM_HOME="$HOME_DIR" "$BROWSER" status alpha --json | jq -e '.health == "running" and .port == '"$port" >/dev/null \
+FM_HOME="$HOME_DIR" "$BROWSER" status alpha --json | jq -e --argjson p "$port" '.health == "running" and .cdp_port == $p' >/dev/null \
   || fail "status --json lost record fields or health"
 FM_HOME="$HOME_DIR" "$BROWSER" status alpha >/dev/null 2>&1 && pass "status answers a live lease" || fail "status failed"
 if FM_HOME="$HOME_DIR" "$BROWSER" status no-such-owner >/dev/null 2>&1; then
@@ -99,7 +107,7 @@ pass "dead lease is reported, env is refused, and destroy cleans records"
 fresh_lease gamma >/dev/null || fail "lease gamma failed"
 sleep 60 &
 foreign_pid=$!
-lease_json gamma | jq --argjson p "$foreign_pid" '.pid = $p | .pidStart = null' > "$CASE/gamma-tampered" \
+lease_json gamma | jq --argjson p "$foreign_pid" '.pid = $p | .pid_start = null' > "$CASE/gamma-tampered" \
   && mv "$CASE/gamma-tampered" "$HOME_DIR/state/browser-leases/gamma.json"
 if FM_HOME="$HOME_DIR" "$BROWSER" destroy gamma >/dev/null 2>&1; then
   fail "destroy signaled a pid that does not match the lease"
@@ -114,7 +122,7 @@ pass "destroy refuses a foreign pid and keeps the record as evidence"
 # 7. a recycled pid (same pid, new start time) is also refused.
 fresh_lease delta >/dev/null || fail "lease delta failed"
 delta_json="$HOME_DIR/state/browser-leases/delta.json"
-jq '.pidStart = (if .pidStart == null then "1" else (.pidStart + "0") end)' "$delta_json" > "$CASE/delta-tampered" \
+jq '.pid_start = (if .pid_start == null then "1" else (.pid_start + "0") end)' "$delta_json" > "$CASE/delta-tampered" \
   && mv "$CASE/delta-tampered" "$delta_json"
 if FM_HOME="$HOME_DIR" FM_BROWSER_AXI_BIN=/nonexistent-axi "$BROWSER" destroy delta >/dev/null 2>&1; then
   fail "destroy accepted a recycled pid"
@@ -123,7 +131,7 @@ FM_HOME="$HOME_DIR" "$BROWSER" status delta | grep -q "^delta: foreign" || fail 
 # Restore the true start time and the same live lease must destroy normally.
 true_start=$(awk '{print $22}' "/proc/$(jq -r .pid "$delta_json")/stat" 2>/dev/null || true)
 if [ -n "$true_start" ]; then
-  jq --arg s "$true_start" '.pidStart = $s' "$delta_json" > "$CASE/delta-fixed" && mv "$CASE/delta-fixed" "$delta_json"
+  jq --arg s "$true_start" '.pid_start = $s' "$delta_json" > "$CASE/delta-fixed" && mv "$CASE/delta-fixed" "$delta_json"
   destroy delta | grep -q "^destroyed delta" || fail "destroy failed after restoring identity"
 else
   destroy delta | grep -q "^destroyed delta" || fail "destroy failed on a host without /proc start times"
@@ -143,7 +151,27 @@ lease_json zeta | jq -e '.window == "800,600"' >/dev/null || fail "record lost c
 destroy zeta >/dev/null || fail "destroy zeta failed"
 pass "custom window size is honored end to end"
 
-# 10. the home is required explicitly.
+# 10. the scripts/browser-lease-* entry points are reusable wrappers.
+EP_CREATE="$ROOT/scripts/browser-lease-create"
+EP_STATUS="$ROOT/scripts/browser-lease-status"
+EP_DESTROY="$ROOT/scripts/browser-lease-destroy"
+for ep in "$EP_CREATE" "$EP_STATUS" "$EP_DESTROY"; do
+  [ -x "$ep" ] || fail "entry point not executable: $ep"
+done
+FM_HOME="$HOME_DIR" FM_BROWSER_AXI_BIN=/nonexistent-axi \
+  FM_BROWSER_CHROME_BIN="$FAKE_CHROME" FM_BROWSER_START_TIMEOUT=15 \
+  FM_TEST_FAKE_SERVE="$CASE/fakebin/serve.py" \
+  FM_TEST_FAKE_CHROME_ARGS="$CASE/chrome.args" FM_TEST_FAKE_CHROME_PID="$CASE/chrome.pid" \
+  "$EP_CREATE" entry --window 390x844 >/dev/null || fail "browser-lease-create failed"
+FM_HOME="$HOME_DIR" "$EP_STATUS" entry | grep -q "^entry: running pid=" || fail "browser-lease-status did not report the lease"
+lease_json entry | jq -e '.task_id == "entry" and (.browser_url | startswith("http://127.0.0.1:"))' >/dev/null \
+  || fail "entry-point lease record is malformed"
+FM_HOME="$HOME_DIR" FM_BROWSER_AXI_BIN=/nonexistent-axi "$EP_DESTROY" entry | grep -q "^destroyed entry" \
+  || fail "browser-lease-destroy failed"
+[ -f "$HOME_DIR/state/browser-leases/entry.json" ] && fail "entry-point lease record survived destroy"
+pass "scripts/browser-lease-create/status/destroy are reusable entry points"
+
+# 11. the home is required explicitly.
 if env -u FM_HOME "$BROWSER" status >/dev/null 2>&1; then fail "status ran with no home"; fi
 pass "home resolution fails closed"
 

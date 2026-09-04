@@ -89,8 +89,8 @@ BASE_URL="http://127.0.0.1:$SERVE_PORT"
 axi() { # <owner> <args...> - one axi call against one lease's browser
   local owner=$1; shift
   local port session
-  port=$(FM_HOME="$HOME_DIR" "$BROWSER" status "$owner" --json | jq -r .port)
-  session=$(FM_HOME="$HOME_DIR" "$BROWSER" status "$owner" --json | jq -r .axiSession)
+  port=$(FM_HOME="$HOME_DIR" "$BROWSER" status "$owner" --json | jq -r .cdp_port)
+  session=$(FM_HOME="$HOME_DIR" "$BROWSER" status "$owner" --json | jq -r .axi_session)
   CHROME_DEVTOOLS_AXI_BROWSER_URL="http://127.0.0.1:$port" \
     CHROME_DEVTOOLS_AXI_SESSION="$session" \
     timeout 120 "$AXI" "$@" 2>&1
@@ -154,7 +154,7 @@ size=$(png_size "$shot")
 [ "$size" = "390 844" ] || fail "screenshot is ${size}px, not 390x844"
 pass "exact 390x844 viewport and screenshot dimensions"
 
-w1_port=$(FM_HOME="$HOME_DIR" "$BROWSER" status w1 --json | jq -r .port)
+w1_port=$(FM_HOME="$HOME_DIR" "$BROWSER" status w1 --json | jq -r .cdp_port)
 if command -v ss >/dev/null 2>&1; then
   ss -tln | grep ":$w1_port " | grep -q '127.0.0.1:' || fail "CDP port $w1_port is not loopback-bound"
   pass "CDP endpoint binds to 127.0.0.1 only"
@@ -174,9 +174,9 @@ FM_HOME="$HOME_DIR" "$BROWSER" lease worker-b >/dev/null || fail "could not leas
 ra=$(FM_HOME="$HOME_DIR" "$BROWSER" status worker-a --json)
 rb=$(FM_HOME="$HOME_DIR" "$BROWSER" status worker-b --json)
 [ "$(jq -r .pid <<<"$ra")" != "$(jq -r .pid <<<"$rb")" ] || fail "workers share a Chrome pid"
-[ "$(jq -r .port <<<"$ra")" != "$(jq -r .port <<<"$rb")" ] || fail "workers share a CDP port"
-[ "$(jq -r .profileDir <<<"$ra")" != "$(jq -r .profileDir <<<"$rb")" ] || fail "workers share a profile"
-[ "$(jq -r .axiSession <<<"$ra")" != "$(jq -r .axiSession <<<"$rb")" ] || fail "workers share an axi session"
+[ "$(jq -r .cdp_port <<<"$ra")" != "$(jq -r .cdp_port <<<"$rb")" ] || fail "workers share a CDP port"
+[ "$(jq -r .profile_path <<<"$ra")" != "$(jq -r .profile_path <<<"$rb")" ] || fail "workers share a profile"
+[ "$(jq -r .axi_session <<<"$ra")" != "$(jq -r .axi_session <<<"$rb")" ] || fail "workers share an axi session"
 pass "two workers hold separate pid, CDP port, profile, and axi session"
 
 axi worker-a open "$BASE_URL/index.html?q=aaa" >/dev/null || fail "worker-a could not open its page"
@@ -208,8 +208,8 @@ if [ "${FM_BROWSER_LIVE_E2E_PI:-0}" = 1 ]; then
   command -v pi >/dev/null 2>&1 || fail "pi not found for the model-driven section"
   model="${FM_BROWSER_LIVE_E2E_MODEL:?set FM_BROWSER_LIVE_E2E_MODEL, e.g. surplus/glm-5.2}"
   FM_HOME="$HOME_DIR" "$BROWSER" lease model-worker >/dev/null || fail "could not lease model-worker"
-  port=$(FM_HOME="$HOME_DIR" "$BROWSER" status model-worker --json | jq -r .port)
-  session=$(FM_HOME="$HOME_DIR" "$BROWSER" status model-worker --json | jq -r .axiSession)
+  port=$(FM_HOME="$HOME_DIR" "$BROWSER" status model-worker --json | jq -r .cdp_port)
+  session=$(FM_HOME="$HOME_DIR" "$BROWSER" status model-worker --json | jq -r .axi_session)
   prompt="You have a dedicated browser through the chrome-devtools-axi CLI (already on PATH). \
 Your browser is selected by the exported CHROME_DEVTOOLS_AXI_BROWSER_URL and CHROME_DEVTOOLS_AXI_SESSION environment variables; do not change them and never pass a --port. \
 Use bash to run: chrome-devtools-axi open '$BASE_URL/index.html', then snapshot, fill the textbox with modeltask, click the go button, then eval that the heading reads submitted:modeltask. \

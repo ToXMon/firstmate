@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--browser]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--browser]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -45,6 +45,12 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
+#   --browser declares that this task operates a dedicated browser. The spawn
+#   provisions the task's bin/fm-browser.sh lease before launch (reusing an
+#   existing healthy lease), ships the lease env into the worker pane ahead of
+#   the launch command, and teardown destroys the lease at cleanup. A lease
+#   creation failure refuses the launch rather than starting a browser worker
+#   with no browser.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -345,6 +351,7 @@ BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
 TRACEPARENT_SET=0
+BROWSER_REQUESTED=0
 RELAUNCH=0
 POS=()
 want_value=
@@ -384,6 +391,7 @@ for a in "$@"; do
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
+    --browser) BROWSER_REQUESTED=1 ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -3232,10 +3240,20 @@ spawn_record_traceparent() {
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 # Dedicated-browser lease handoff (bin/fm-browser.sh owns the lease contract).
-# A task whose browser lease exists gets its env shipped through the same
-# pre-launch channel, so any harness's browser work lands on its own isolated
-# Chrome with no firstmate-wide Chrome state. No lease record means no line is
-# sent and nothing below changes, so non-browser tasks are untouched.
+# --browser is the declaration seam: a browser-declaring task gets its lease
+# provisioned right here, before the worker launch, so the browser exists by
+# construction rather than by a manual pre-created record. An existing healthy
+# lease for the task is reused; a task without --browser and without a lease
+# record sends nothing and is untouched. The env is then shipped through the
+# same pre-launch channel as GOTMPDIR, so any harness's browser work lands on
+# its own isolated Chrome with no firstmate-wide Chrome state.
+if [ "$BROWSER_REQUESTED" = 1 ] && [ ! -f "$STATE/browser-leases/$ID.json" ]; then
+  if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="${FM_STATE_OVERRIDE:-}" \
+      "$FM_ROOT/bin/fm-browser.sh" lease "$ID" >&2; then
+    echo "error: --browser was requested but the dedicated-Chrome lease could not be created; refusing to launch the worker without it" >&2
+    exit 1
+  fi
+fi
 if [ -f "$STATE/browser-leases/$ID.json" ]; then
   if BROWSER_LEASE_ENV=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="${FM_STATE_OVERRIDE:-}" "$FM_ROOT/bin/fm-browser.sh" env "$ID" 2>/dev/null); then
     while IFS= read -r lease_line; do

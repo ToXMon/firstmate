@@ -18,10 +18,17 @@
 # lease starts a dedicated Chrome for <owner-id> (normally a Firstmate task
 # id, any [A-Za-z0-9._-]+ name works for ad-hoc use) and records the lease.
 # The lease record and profiles live under the target home's state/
-# directory: state/browser-leases/<owner>.json and
-# state/browser-profiles/<owner>-<epoch>-<token>. The home is --home or
+# directory: state/browser-leases/<task-id>.json and
+# state/browser-profiles/<browser-id>. The home is --home or
 # $FM_HOME (fail-closed: one must be explicit, like bin/fm-send.sh);
 # FM_STATE_OVERRIDE relocates state/ exactly as fm-send allows.
+#
+# Lease record contract (schema_version 2): the operational keys
+# browser_id, task_id, pid, cdp_port, browser_url, profile_path,
+# axi_session, created_at, plus the safe-ownership fields chrome_bin,
+# pid_start (null where /proc cannot provide it), and window. Consumers
+# read the record only through this script's subcommands or
+# scripts/browser-lease-* entry points, never by re-implementing checks.
 #
 # status prints one line per lease: owner, health, pid, port, profile, axi
 # session. --json prints the full records with live health merged. Without
@@ -121,8 +128,8 @@ pid_cmdline() {
 # recycled pid cannot pass even if an unrelated Chrome shares the arguments.
 identity_matches() { # <record-json> <pid>
   local rec=$1 pid=$2 cmdline profile port recorded live
-  profile=$(jq -r .profileDir <<<"$rec")
-  port=$(jq -r .port <<<"$rec")
+  profile=$(jq -r .profile_path <<<"$rec")
+  port=$(jq -r .cdp_port <<<"$rec")
   cmdline=$(pid_cmdline "$pid")
   [ -n "$cmdline" ] || return 1
   case "$cmdline" in
@@ -133,7 +140,7 @@ identity_matches() { # <record-json> <pid>
     *"--remote-debugging-port=$port"*) : ;;
     *) return 1 ;;
   esac
-  recorded=$(jq -r '.pidStart // ""' <<<"$rec")
+  recorded=$(jq -r '.pid_start // ""' <<<"$rec")
   live=$(pid_starttime "$pid")
   if [ -n "$recorded" ] && [ -n "$live" ] && [ "$recorded" != "$live" ]; then
     return 1
@@ -181,7 +188,7 @@ read_record() {
 lease_health() { # <record> -> prints running|unresponsive|dead|foreign
   local rec=$1 pid port
   pid=$(jq -r .pid <<<"$rec")
-  port=$(jq -r .port <<<"$rec")
+  port=$(jq -r .cdp_port <<<"$rec")
   if ! pid_alive "$pid"; then printf 'dead'; return 0; fi
   if ! identity_matches "$rec" "$pid"; then printf 'foreign'; return 0; fi
   if ! endpoint_ready "$port"; then printf 'unresponsive'; return 0; fi
@@ -205,7 +212,7 @@ cmd_lease() {
 }
 
 lease_locked() {
-  local chrome_bin profile port pid rec start timeout_s waited attempt=0
+  local chrome_bin profile port pid rec start timeout_s waited attempt=0 browser_id
   chrome_bin="${FM_BROWSER_CHROME_BIN:-$DEFAULT_CHROME_BIN}"
   [ -x "$chrome_bin" ] || die "dedicated Chrome binary not executable: $chrome_bin (override with FM_BROWSER_CHROME_BIN)"
   if [ -f "$(lease_path "$OWNER_ARG")" ]; then
@@ -218,7 +225,8 @@ lease_locked() {
   esac
   window_flag="${WINDOW_ARG:-390x844}"
   window_flag="${window_flag/x/,}"
-  profile="$(profiles_dir)/$OWNER_ARG-$(date +%s)-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  browser_id="fmb-$OWNER_ARG-$(date +%s)-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  profile="$(profiles_dir)/$browser_id"
   timeout_s="${FM_BROWSER_START_TIMEOUT:-20}"
   while :; do
     attempt=$((attempt + 1))
@@ -249,25 +257,26 @@ lease_locked() {
   done
   start=$(pid_starttime "$pid")
   rec=$(jq -n \
-    --arg owner "$OWNER_ARG" --arg chromeBin "$chrome_bin" \
-    --argjson pid "$pid" --arg pidStart "$start" --argjson port "$port" \
-    --arg profileDir "$profile" --arg axiSession "fmb-$OWNER_ARG-$(date +%s)" \
-    --arg window "$window_flag" --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{schemaVersion: 1, owner: $owner, chromeBin: $chromeBin, pid: $pid,
-      pidStart: (if $pidStart == "" then null else $pidStart end),
-      port: $port, profileDir: $profileDir, axiSession: $axiSession,
-      window: $window, createdAt: $createdAt}')
+    --arg browser_id "$browser_id" --arg task_id "$OWNER_ARG" --arg chrome_bin "$chrome_bin" \
+    --argjson pid "$pid" --arg pid_start "$start" --argjson cdp_port "$port" \
+    --arg browser_url "http://127.0.0.1:$port" --arg profile_path "$profile" \
+    --arg axi_session "$browser_id" \
+    --arg window "$window_flag" --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{schema_version: 2, browser_id: $browser_id, task_id: $task_id, chrome_bin: $chrome_bin,
+      pid: $pid, pid_start: (if $pid_start == "" then null else $pid_start end),
+      cdp_port: $cdp_port, browser_url: $browser_url, profile_path: $profile_path,
+      axi_session: $axi_session, window: $window, created_at: $created_at}')
   printf '%s\n' "$rec" > "$(lease_path "$OWNER_ARG")"
   rm -f "$profile.log"
-  echo "lease $OWNER_ARG: pid=$pid port=$port window=$window_flag axi=$(jq -r .axiSession <<<"$rec")"
+  echo "lease $OWNER_ARG: browser_id=$browser_id pid=$pid cdp_port=$port window=$window_flag"
   cmd_env
 }
 
 print_record_line() { # <record>
   local rec=$1
   printf '%s: %s pid=%s port=%s profile=%s axi=%s\n' \
-    "$(jq -r .owner <<<"$rec")" "$(lease_health "$rec")" "$(jq -r .pid <<<"$rec")" \
-    "$(jq -r .port <<<"$rec")" "$(jq -r .profileDir <<<"$rec")" "$(jq -r .axiSession <<<"$rec")"
+    "$(jq -r .task_id <<<"$rec")" "$(lease_health "$rec")" "$(jq -r .pid <<<"$rec")" \
+    "$(jq -r .cdp_port <<<"$rec")" "$(jq -r .profile_path <<<"$rec")" "$(jq -r .axi_session <<<"$rec")"
 }
 
 cmd_status() {
@@ -318,8 +327,8 @@ cmd_env() {
       exit 1
       ;;
   esac
-  printf 'export CHROME_DEVTOOLS_AXI_BROWSER_URL=http://127.0.0.1:%s\n' "$(jq -r .port <<<"$rec")"
-  printf 'export CHROME_DEVTOOLS_AXI_SESSION=%s\n' "$(jq -r .axiSession <<<"$rec")"
+  printf 'export CHROME_DEVTOOLS_AXI_BROWSER_URL=%s\n' "$(jq -r .browser_url <<<"$rec")"
+  printf 'export CHROME_DEVTOOLS_AXI_SESSION=%s\n' "$(jq -r .axi_session <<<"$rec")"
 }
 
 cmd_destroy() {
@@ -332,9 +341,9 @@ destroy_locked() {
   local rec pid port profile axi waited
   rec=$(read_record "$OWNER_ARG") || { echo "fm-browser: no lease record for $OWNER_ARG" >&2; exit 2; }
   pid=$(jq -r .pid <<<"$rec")
-  port=$(jq -r .port <<<"$rec")
-  profile=$(jq -r .profileDir <<<"$rec")
-  axi=$(jq -r .axiSession <<<"$rec")
+  port=$(jq -r .cdp_port <<<"$rec")
+  profile=$(jq -r .profile_path <<<"$rec")
+  axi=$(jq -r .axi_session <<<"$rec")
   if ! pid_alive "$pid"; then
     warn "chrome for $OWNER_ARG (pid $pid) already exited; cleaning records"
     stop_axi_session_best_effort "$axi" "$port"

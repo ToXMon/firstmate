@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# browser-lease-create - reusable operator entry point: create a dedicated
+# Chrome lease for one task.
+#
+# Usage:
+#   browser-lease-create <task-id> [--home PATH] [--window WxH]
+#
+# Thin, explicitly-bound wrapper: the lease engine is bin/fm-browser.sh in
+# this repository (resolved relative to this script's real location, or
+# overridden with FM_BROWSER_ENGINE for installed copies). There is no other
+# dependency and no other behavior; the engine's header owns the lease
+# contract, the record schema, and every safety guarantee (loopback-only CDP,
+# dynamic port allocation, unique profile and axi session, verified-identity
+# destroy, the legacy shared :9222 Chrome never touched).
+#
+# Exit codes: the engine's: 0 success, 1 usage/verification failure,
+# 3 lease already exists for this task id.
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+ENGINE="${FM_BROWSER_ENGINE:-$(cd "$(dirname "$SELF")/../bin" && pwd)/fm-browser.sh}"
+[ -x "$ENGINE" ] || { echo "browser-lease-create: lease engine not executable: $ENGINE (set FM_BROWSER_ENGINE)" >&2; exit 1; }
+exec "$ENGINE" lease "$@"

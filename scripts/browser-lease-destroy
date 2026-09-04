@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# browser-lease-destroy - reusable operator entry point: destroy one
+# dedicated Chrome lease with verified ownership.
+#
+# Usage:
+#   browser-lease-destroy <task-id> [--home PATH]
+#
+# The engine (bin/fm-browser.sh, resolved relative to this script's real
+# location or overridden with FM_BROWSER_ENGINE) refuses to signal any
+# process it cannot prove is the leased Chrome (exact profile path,
+# debugging port, and process start time), so the legacy shared :9222
+# Chrome is unreachable from here.
+#
+# Exit codes: 0 destroyed (or was already dead and cleaned), 1 refused or
+# failed, 2 unknown task id.
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+ENGINE="${FM_BROWSER_ENGINE:-$(cd "$(dirname "$SELF")/../bin" && pwd)/fm-browser.sh}"
+[ -x "$ENGINE" ] || { echo "browser-lease-destroy: lease engine not executable: $ENGINE (set FM_BROWSER_ENGINE)" >&2; exit 1; }
+exec "$ENGINE" destroy "$@"

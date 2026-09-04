@@ -483,10 +483,6 @@
     {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
-    },
-    {
-      "path": "docs/verification/multi-model-crew.md",
-      "audience": "maintainer-verification"
     }
   ]
 }

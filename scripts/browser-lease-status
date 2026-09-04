@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# browser-lease-status - reusable operator entry point: report dedicated
+# Chrome leases and their health.
+#
+# Usage:
+#   browser-lease-status [<task-id>] [--home PATH] [--json]
+#
+# Without a task id, lists every lease in the home so orphaned browsers are
+# discoverable. Health values and the record schema are owned by the lease
+# engine (bin/fm-browser.sh), resolved relative to this script's real
+# location or overridden with FM_BROWSER_ENGINE.
+#
+# Exit codes: 0 success, 2 unknown task id, 1 usage failure.
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+ENGINE="${FM_BROWSER_ENGINE:-$(cd "$(dirname "$SELF")/../bin" && pwd)/fm-browser.sh}"
+[ -x "$ENGINE" ] || { echo "browser-lease-status: lease engine not executable: $ENGINE (set FM_BROWSER_ENGINE)" >&2; exit 1; }
+exec "$ENGINE" status "$@"
