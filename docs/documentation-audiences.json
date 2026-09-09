@@ -357,6 +357,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/mission-control/kun-advisor.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/orca-backend.md",
       "audience": "operator-current"
     },
@@ -430,6 +434,14 @@
     },
     {
       "path": "docs/verification/dispatch-auth.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/mission-control-kun-advisor.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/multi-model-crew.md",
       "audience": "maintainer-verification"
     },
     {
