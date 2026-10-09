@@ -1,0 +1,33 @@
+Scenario: npm-cache Backpass resolves and runs through its discovered path
+resolved=/Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/home/.npm/_npx/disposable-backpass/node_modules/.bin/backpass
+/Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/home/.npm/_npx/disposable-backpass/node_modules/.bin/backpass
+fm-require-cmd.sh: verified /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/fresh-synthesis.md
+artifact=final synthesis
+
+Scenario: absent command reports every restricted PATH location
+exit=127
+fm-require-cmd.sh: unavailable-backpass: no executable found
+fm-require-cmd.sh: searched: /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/path-a, /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/path-b, /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/home/.local/bin, /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/home/.npm/_npx/disposable-backpass/node_modules/.bin
+fm-require-cmd.sh: install unavailable-backpass and put it on PATH
+
+Scenario: artifact guard rejects empty, stale, and outputless runs, and accepts fresh hidden directory output without ls
+empty-exit=1
+fm-require-cmd.sh: artifact path must not be empty
+no-output-exit=1
+/Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/home/.npm/_npx/disposable-backpass/node_modules/.bin/backpass
+analysis completed without final synthesis
+fm-require-cmd.sh: /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/home/.npm/_npx/disposable-backpass/node_modules/.bin/backpass exited 0 but produced no artifact at /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/no-output.md; the run is not complete
+stale-exit=1
+/Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/home/.npm/_npx/disposable-backpass/node_modules/.bin/backpass
+fm-require-cmd.sh: artifact target already exists at /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/stale.md; remove it before running
+/Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/home/.npm/_npx/disposable-backpass/node_modules/.bin/backpass
+fm-require-cmd.sh: verified /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-live.lK7fFw/fresh-directory
+fresh-hidden-directory-artifact=verified
+
+Scenario: executable resolver skips a directory and selects the next regular PATH executable, then falls back to ~/.local/bin
+path-result=/Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-resolution.4072wx/path-second/path-tool
+local-result=/Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-resolution.4072wx/home/.local/bin/local-tool
+directory-only-exit=127
+fm-require-cmd.sh: path-tool: no executable found
+fm-require-cmd.sh: searched: /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-resolution.4072wx/path-first, /Users/tolushekoni/.no-mistakes/worktrees/29777ddf1f41/01M4GH4W07YQ1GS9J8BEV49KKH/.fm-require-cmd-resolution.4072wx/home/.local/bin
+fm-require-cmd.sh: install path-tool and put it on PATH
